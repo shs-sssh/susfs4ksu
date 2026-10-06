@@ -1196,7 +1196,7 @@ index 156bc0ff3c48..1c80a7eb0c87 100644
  
  	task = get_proc_task(m->private);
  	if (!task)
-@@ -54,9 +60,20 @@ static int seq_show(struct seq_file *m, void *v)
+@@ -54,9 +63,20 @@ static int seq_show(struct seq_file *m, void *v)
  	if (ret)
  		return ret;
  
