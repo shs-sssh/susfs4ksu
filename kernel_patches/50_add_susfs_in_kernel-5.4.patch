@@ -762,6 +762,7 @@ index 5e94ec9f45d4..2e90bade7c91 100644
 +
  	if (!fc->root)
 	    return ERR_PTR(-EINVAL);
+		
 	sb = fc->root->d_sb;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -779,9 +780,9 @@ index 5e94ec9f45d4..2e90bade7c91 100644
  		return ERR_PTR(-ENOMEM);
  
 @@ -979,6 +1093,29 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void
-	mnt->mnt.mnt_root = dget(root);
-	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
-	mnt->mnt_parent = mnt;
+ 	mnt->mnt.mnt_root = dget(root);
+ 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
+ 	mnt->mnt_parent = mnt;
 +
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	// - If caller process is zygote, then it is a normal mount, so we calculate the next available 
