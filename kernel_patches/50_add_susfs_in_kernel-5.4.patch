@@ -108,7 +108,7 @@ diff --git a/fs/namei.c b/fs/namei.c
 index 94f388e94dd1..1e40aef77cf9 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -37,10 +37,22 @@
+@@ -37,9 +37,21 @@
  #include <linux/init_task.h>
  #include <linux/uaccess.h>
  #include <linux/build_bug.h>
