@@ -750,7 +750,7 @@ index 5e94ec9f45d4..2e90bade7c91 100644
  		if (err)
  			goto out_free_cache;
  
-@@ -948,12 +1046,28 @@
+@@ -948,12 +1046,28 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc){
     struct mount *mnt;
     struct super_block *sb;
  
@@ -778,7 +778,7 @@ index 5e94ec9f45d4..2e90bade7c91 100644
  	if (!mnt)
  		return ERR_PTR(-ENOMEM);
  
-@@ -979,6 +1093,29 @@
+@@ -979,6 +1093,29 @@ mnt->mnt.mnt_sb		= fc->root->d_sb;
  	mnt->mnt.mnt_root	= dget(fc->root);
 	mnt->mnt_mountpoint	= mnt->mnt.mnt_root;
 	mnt->mnt_parent		= mnt;
