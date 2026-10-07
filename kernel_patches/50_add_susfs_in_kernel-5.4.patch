@@ -1432,7 +1432,7 @@ index 3c5ce8a0ddc9..738834a3bb2f 100644
  	error = iterate_dir(f.file, &buf.ctx);
  	if (buf.result)
  		error = buf.result;
-@@ -195,6 +259,11 @@ struct linux_dirent {
+@@ -195,6 +259,11 @@
  struct getdents_callback {
  	struct dir_context ctx;
  	struct linux_dirent __user * current_dir;
