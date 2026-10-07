@@ -1843,7 +1843,7 @@ index 376543199b5a..a15298088352 100644
  	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
  		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
  		return -EINVAL;
-@@ -187,7 +213,15 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
+@@ -187,6 +213,14 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
  		goto out;
  
  	error = vfs_getattr(&path, stat, request_mask, flags);
@@ -1853,12 +1853,11 @@ index 376543199b5a..a15298088352 100644
 +		for (; mnt->mnt_id >= DEFAULT_SUS_MNT_ID; mnt = mnt->mnt_parent) {}
 +	}
 +	stat->mnt_id = mnt->mnt_id;
-+#else
- 	path_put(&path);
 +#endif
++
+ 	path_put(&path);
  	if (retry_estale(error, lookup_flags)) {
  		lookup_flags |= LOOKUP_REVAL;
- 		goto retry;
 diff --git a/fs/statfs.c b/fs/statfs.c
 index 29786598c2b5..a14a8961f011 100644
 --- a/fs/statfs.c
