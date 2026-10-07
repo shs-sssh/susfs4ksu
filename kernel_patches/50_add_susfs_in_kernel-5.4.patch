@@ -1447,14 +1447,14 @@ index 3c5ce8a0ddc9..738834a3bb2f 100644
 @@ -210,6 +279,9 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
  	int reclen = ALIGN(offsetof(struct linux_dirent, d_name) + namlen + 2,
  		sizeof(long));
- 
+    int prev_reclen;
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +	struct inode *inode;
 +#endif
  	buf->error = verify_dirent_name(name, namlen);
  	if (unlikely(buf->error))
  		return buf->error;
-@@ -228,6 +300,29 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
+@@ -228,6 +300,29 @@ static int compat_filldir(struct dir_context *ctx, const char *name, int namlen,
  		if (__put_user(offset, &dirent->d_off))
  			goto efault;
  	}
@@ -1484,8 +1484,8 @@ index 3c5ce8a0ddc9..738834a3bb2f 100644
  	dirent = buf->current_dir;
  	if (__put_user(d_ino, &dirent->d_ino))
  		goto efault;
-@@ -260,10 +355,35 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 		.current_dir = dirent
+@@ -260,10 +355,35 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ 		.count = count
  	};
  	int error;
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
