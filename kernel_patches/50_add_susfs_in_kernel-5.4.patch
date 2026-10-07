@@ -762,7 +762,7 @@ index 5e94ec9f45d4..2e90bade7c91 100644
 +
  	if (!fc->root)
 	    return ERR_PTR(-EINVAL);
-		
+ 
 	sb = fc->root->d_sb;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
