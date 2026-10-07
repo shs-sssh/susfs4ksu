@@ -760,10 +760,10 @@ index 5e94ec9f45d4..2e90bade7c91 100644
 +	int mnt_id;
 +#endif
 +
- 	if (!fc->root)
-	    return ERR_PTR(-EINVAL);
+ 	struct dentry *root;
  
-	sb = fc->root->d_sb;
+ 	if (!type)
+ 		return ERR_PTR(-ENODEV);
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	// For newly created mounts, the only caller process we care is KSU
