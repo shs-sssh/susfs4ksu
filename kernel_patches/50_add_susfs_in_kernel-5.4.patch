@@ -56,7 +56,7 @@ diff --git a/fs/Makefile b/fs/Makefile
 index 0fc34cafe665..8f4b814e1eb5 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -14,6 +14,8 @@ obj-y :=	open.o read_write.o file_table.o super.o \
+@@ -11,6 +11,8 @@ obj-y :=	open.o read_write.o file_table.o super.o \
  		pnode.o splice.o sync.o utimes.o d_path.o \
  		stack.o fs_struct.o statfs.o fs_pin.o nsfs.o
  
