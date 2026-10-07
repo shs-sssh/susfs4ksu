@@ -1210,9 +1210,9 @@ index 156bc0ff3c48..1c80a7eb0c87 100644
 +			(long long)file->f_pos, f_flags,
 +			mnt->mnt_id);
 +#else
- 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
- 		   (long long)file->f_pos, f_flags,
- 		   real_mount(file->f_path.mnt)->mnt_id);
+  	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
+  		   (long long)file->f_pos, f_flags,
+  		   real_mount(file->f_path.mnt)->mnt_id);
 +#endif
  	show_fd_locks(m, file, files);
  	if (seq_has_overflowed(m))
