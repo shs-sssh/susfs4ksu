@@ -750,7 +750,7 @@ index 5e94ec9f45d4..2e90bade7c91 100644
  		if (err)
  			goto out_free_cache;
  
-@@ -948,12 +1046,28 @@ struct vfsmount *
+@@ -948,12 +1046,28 @@ struct vfsmount *vfs_create_mount
     struct mount *mnt;
     struct super_block *sb;
  
