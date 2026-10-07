@@ -1520,7 +1520,7 @@ index 3c5ce8a0ddc9..738834a3bb2f 100644
  	f = fdget_pos(fd);
  	if (!f.file)
  		return -EBADF;
-@@ -285,6 +405,11 @@ struct getdents_callback64 
+@@ -285,6 +405,11 @@ struct getdents_callback 
  {
  	struct dir_context ctx;
  	struct linux_dirent64 __user * current_dir;
@@ -1535,7 +1535,7 @@ index 3c5ce8a0ddc9..738834a3bb2f 100644
 @@ -299,6 +424,9 @@ static int filldir64(struct dir_context *ctx, const char *name, int namlen,
  	int reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + namlen + 1,
  		sizeof(u64));
- 
+	int prev_reclen;
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +	struct inode *inode;
 +#endif
