@@ -1197,8 +1197,8 @@ index 156bc0ff3c48..1c80a7eb0c87 100644
  	task = get_proc_task(m->private);
  	if (!task)
 @@ -51,9 +57,20 @@ static int seq_show(struct seq_file *m, void *v)
- 	if (ret)
- 		return ret;
+     if (ret)
+         return ret;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	mnt = real_mount(file->f_path.mnt);
@@ -1210,13 +1210,13 @@ index 156bc0ff3c48..1c80a7eb0c87 100644
 +			(long long)file->f_pos, f_flags,
 +			mnt->mnt_id);
 +#else
-  	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
-  		   (long long)file->f_pos, f_flags,
-  		   real_mount(file->f_path.mnt)->mnt_id);
+     seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
+         (long long)file->f_pos, f_flags,
+         real_mount(file->f_path.mnt)->mnt_id);
 +#endif
- 	show_fd_locks(m, file, files);
- 	if (seq_has_overflowed(m))
- 		goto out;
+     show_fd_locks(m, file, files);
+     if (seq_has_overflowed(m))
+         goto out;
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 index f84dc265bb34..96e98e89825d 100644
 --- a/fs/proc/task_mmu.c
