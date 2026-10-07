@@ -750,20 +750,20 @@ index 5e94ec9f45d4..2e90bade7c91 100644
  		if (err)
  			goto out_free_cache;
  
-@@ -948,12 +1046,28 @@ struct vfsmount *vfs_create_mount
+@@ -948,12 +1046,28 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
+ {
     struct mount *mnt;
     struct super_block *sb;
- 
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	struct mount *m;
 +	struct mnt_namespace *mnt_ns;
 +	int mnt_id;
 +#endif
 +
- 	struct dentry *root;
  
- 	if (!type)
- 		return ERR_PTR(-ENODEV);
+ 	if (!fc->root)
+	    return ERR_PTR(-EINVAL);
+	sb = fc->root->d_sb;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	// For newly created mounts, the only caller process we care is KSU
