@@ -807,8 +807,8 @@ index 5e94ec9f45d4..2e90bade7c91 100644
 +#endif
 +
  	lock_mount_hash();
-	list_add_tail(&mnt->mnt_instance, &mnt->mnt.mnt_sb->s_mounts);
-	unlock_mount_hash();
+ 	list_add_tail(&mnt->mnt_instance, &root->d_sb->s_mounts);
+ 	unlock_mount_hash();
 @@ -1008,7 +1145,47 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
  	struct mount *mnt;
  	int err;
