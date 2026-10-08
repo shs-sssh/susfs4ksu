@@ -1840,9 +1840,9 @@ index 376543199b5a..a15298088352 100644
 +#endif
 +
 +
- 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
- 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
- 		return -EINVAL;
+ #ifdef CONFIG_KSU
+    ksu_handle_stat(&dfd, &filename, &flags);
+ #endif
 @@ -187,6 +213,14 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
  		goto out;
  
