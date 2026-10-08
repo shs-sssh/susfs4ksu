@@ -1371,6 +1371,158 @@ index 156bc0ff3c48..1c80a7eb0c87 100644
   	show_fd_locks(m, file, files);
   	if (seq_has_overflowed(m))
   		goto out;
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -94,12 +94,16 @@
+ #include <linux/sched/mm.h>
+ #include <linux/sched/coredump.h>
+ #include <linux/sched/debug.h>
+ #include <linux/sched/stat.h>
+ #include <linux/posix-timers.h>
+ #include <linux/cpufreq_times.h>
++#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
++#include <linux/susfs_def.h>
++#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
++
+ #include <trace/events/oom.h>
+ #include "internal.h"
+ #include "fd.h"
+ 
+ #include "../../lib/kstrtox.h"
+ 
+@@ -1784,20 +1788,35 @@
+ 	nd_jump_link(&path);
+ 	return NULL;
+ out:
+ 	return ERR_PTR(error);
+ }
+ 
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++extern int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen);
++#endif
++
+ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+ {
+ 	char *tmp = (char *)__get_free_page(GFP_KERNEL);
+ 	char *pathname;
+ 	int len;
+ 
+ 	if (!tmp)
+ 		return -ENOMEM;
++
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
++		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
++			len = strlen(tmp);
++			if (copy_to_user(buffer, tmp, len))
++				len = -EFAULT;
++			goto out;
++		}
++	}
++#endif
+ 
+ 	pathname = d_path(path, tmp, PAGE_SIZE);
+ 	len = PTR_ERR(pathname);
+ 	if (IS_ERR(pathname))
+ 		goto out;
+ 	len = tmp + PAGE_SIZE - 1 - pathname;
+@@ -2362,12 +2381,16 @@
+ 	 * routine might require mmap_sem taken in might_fault().
+ 	 */
+ 
+ 	for (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
+ 		if (!vma->vm_file)
+ 			continue;
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			continue;
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ 		if (++pos <= ctx->pos)
+ 			continue;
+ 
+ 		p = genradix_ptr_alloc(&fa, nr_files++, GFP_KERNEL);
+ 		if (!p) {
+ 			ret = -ENOMEM;
+diff --git a/fs/open.c b/fs/open.c
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -29,12 +29,15 @@
+ #include <linux/audit.h>
+ #include <linux/falloc.h>
+ #include <linux/fs_struct.h>
+ #include <linux/ima.h>
+ #include <linux/dnotify.h>
+ #include <linux/compat.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs_def.h>
++#endif
+ 
+ #include "internal.h"
+ 
+ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 	struct file *filp)
+ {
+@@ -342,20 +345,29 @@
+ 
+ /*
+  * access() needs to use the real uid/gid, not the effective uid/gid.
+  * We do this by temporarily clearing all FS-related capabilities and
+  * switching the fsuid/fsgid around to the real ones.
+  */
++#ifdef CONFIG_KSU_SUSFS
++extern struct static_key_true ksu_su_compat_enabled;
++extern bool __ksu_is_allow_uid_for_current(uid_t uid);
++extern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
++#endif
++
+ long do_faccessat(int dfd, const char __user *filename, int mode)
+ {
+ 	const struct cred *old_cred;
+ 	struct cred *override_cred;
+ 	struct path path;
+ 	struct inode *inode;
+ 	int res;
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
++#ifdef CONFIG_KSU_SUSFS
++	struct filename *fname = NULL;
++#endif
+ 
+ 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+ 		return -EINVAL;
+ 
+ 	override_cred = prepare_creds();
+ 	if (!override_cred)
+@@ -392,13 +404,29 @@
+ 	 * cred accesses will keep things non-RCY.
+ 	 */
+ 	override_cred->non_rcu = 1;
+ 
+ 	old_cred = override_creds(override_cred);
+ retry:
++#ifdef CONFIG_KSU_SUSFS
++	fname = getname_flags(filename, lookup_flags, NULL);
++
++	if (likely(susfs_is_current_proc_no_su()))
++		goto orig_flow;
++
++	if (static_branch_likely(&ksu_su_compat_enabled)) {
++		if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
++			ksu_handle_faccessat(&dfd, &fname, &mode, NULL);
++	}
++
++orig_flow:
++	res = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
++	// no putname(fname) here as filename_lookup() has it done for us already;
++#else
+ 	res = user_path_at(dfd, filename, lookup_flags, &path);
++#endif
+ 	if (res)
+ 		goto out;
+ 
+ 	inode = d_backing_inode(path.dentry);
+ 
+ 	if ((mode & MAY_EXEC) && S_ISREG(inode->i_mode)) {
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 index f84dc265bb34..96e98e89825d 100644
 --- a/fs/proc/task_mmu.c
