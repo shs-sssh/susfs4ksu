@@ -2,7 +2,7 @@ diff --git a/drivers/input/input.c b/drivers/input/input.c
 index 9190aa182..89889bcf0 100644
 --- a/drivers/input/input.c
 +++ b/drivers/input/input.c
-@@ -375,17 +375,28 @@ static int input_get_disposition(struct input_dev *dev,
+@@ -375,17 +375,28 @@
  	return disposition;
  }
  
