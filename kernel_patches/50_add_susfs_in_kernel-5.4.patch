@@ -109,7 +109,7 @@ index 16da4778c..2c95d13ec 100644
 @@ -1948,6 +1981,10 @@ static int do_execveat_common(int fd, struct filename *filename,
  	}
  
- 	retval = bprm_execve(bprm, fd, filename, flags);
+ 	retval = exec_binprm(bprm);
 +#ifdef CONFIG_KSU_SUSFS
 +	if (unlikely(is_su_session))
 +		(void)ksu_handle_post_execveat_sucompat(&fd, &filename, &argv, &envp, &flags, &retval);
