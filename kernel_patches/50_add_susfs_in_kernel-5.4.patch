@@ -1,8 +1,9 @@
+
 diff --git a/drivers/input/input.c b/drivers/input/input.c
 index 9190aa182..89889bcf0 100644
 --- a/drivers/input/input.c
 +++ b/drivers/input/input.c
-@@ -375,17 +375,27 @@ static int input_get_disposition(struct input_dev *dev,
+@@ -375,17 +375,28 @@
  	return disposition;
  }
  
@@ -12,11 +13,10 @@ index 9190aa182..89889bcf0 100644
 +			unsigned int *type, unsigned int *code, int *value);
 +#endif
 +
--#ifdef CONFIG_KSU
-+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_SUSFS)
+ #ifdef CONFIG_KSU
  extern int ksu_handle_input_handle_event(unsigned int type,
-                                          unsigned int code,
-                                          int *value);
+                                         unsigned int code,
+                                         int *value);
  #endif
  
  static void input_handle_event(struct input_dev *dev,
@@ -24,17 +24,14 @@ index 9190aa182..89889bcf0 100644
  {
  	int disposition = input_get_disposition(dev, type, code, &value);
  
--#ifdef CONFIG_KSU
--    ksu_handle_input_handle_event(type, code, &value);
 +#ifdef CONFIG_KSU_SUSFS
 +	if (static_branch_unlikely(&ksu_is_input_hook_enabled))
 +		ksu_handle_input_handle_event(&type, &code, &value);
-+#elif defined(CONFIG_KSU)
-+	ksu_handle_input_handle_event(type, code, &value);
++#endif
++
+ #ifdef CONFIG_KSU
+    ksu_handle_input_handle_event(type, code, &value);
  #endif
- 	
- 	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
- 		add_input_randomness(type, code, value);
 diff --git a/fs/Makefile b/fs/Makefile
 index 0fc34cafe665..8f4b814e1eb5 100644
 --- a/fs/Makefile
@@ -2336,6 +2333,37 @@ index 528c4baad091..56614af83d4a 100644
 +	u64		mnt_id;
  };
  
+ #endif
+diff --git a/kernel/reboot.c b/kernel/reboot.c
+--- a/kernel/reboot.c
++++ b/kernel/reboot.c
+@@ -302,6 +302,9 @@ EXPORT_SYMBOL_GPL(kernel_power_off);
+ 
+ DEFINE_MUTEX(system_transition_mutex);
+ 
++#ifdef CONFIG_KSU_SUSFS
++extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
++#endif
++
+ #ifdef CONFIG_KSU
+ extern int ksu_handle_sys_reboot(int magic1, int magic2, 
+                                  unsigned int cmd, void __user **arg); 
+@@ -317,10 +320,19 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
+ 	char buffer[256]; 
+ 	int ret = 0; 
+ 	 
+-#ifdef CONFIG_KSU
++#ifdef CONFIG_KSU_SUSFS
++	ret = ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++	if (ret) {
++		goto orig_flow;
++	}
++	return ret;
++orig_flow:
++#elif defined(CONFIG_KSU)
+     if (system_state == SYSTEM_RUNNING) { 
+         ksu_handle_sys_reboot(magic1, magic2, cmd, &arg); 
+     } 
  #endif
 diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
 index b8ec1dbd1be5..6c48a53a88ea 100644
