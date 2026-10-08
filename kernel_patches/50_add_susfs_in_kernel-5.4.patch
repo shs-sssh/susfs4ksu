@@ -1,4 +1,3 @@
-
 diff --git a/drivers/input/input.c b/drivers/input/input.c
 index 9190aa182..89889bcf0 100644
 --- a/drivers/input/input.c
@@ -7,30 +6,26 @@ index 9190aa182..89889bcf0 100644
  	return disposition;
  }
  
+-#ifdef CONFIG_KSU
+-extern int ksu_handle_input_handle_event(unsigned int type,
+-                                         unsigned int code,
+-                                         int *value);
 +#ifdef CONFIG_KSU_SUSFS
 +extern struct static_key_true ksu_is_input_hook_enabled;
 +extern __attribute__((cold)) int ksu_handle_input_handle_event(
-+			unsigned int *type, unsigned int *code, int *value);
-+#endif
-+
- #ifdef CONFIG_KSU
- extern int ksu_handle_input_handle_event(unsigned int type,
-                                         unsigned int code,
-                                         int *value);
++        unsigned int *type, unsigned int *code, int *value);
  #endif
  
  static void input_handle_event(struct input_dev *dev,
- 			       unsigned int type, unsigned int code, int value)
+                                unsigned int type, unsigned int code, int value)
  {
- 	int disposition = input_get_disposition(dev, type, code, &value);
+        int disposition = input_get_disposition(dev, type, code, &value);
  
+-#ifdef CONFIG_KSU
+-    ksu_handle_input_handle_event(type, code, &value);
 +#ifdef CONFIG_KSU_SUSFS
-+	if (static_branch_unlikely(&ksu_is_input_hook_enabled))
-+		ksu_handle_input_handle_event(&type, &code, &value);
-+#endif
-+
- #ifdef CONFIG_KSU
-    ksu_handle_input_handle_event(type, code, &value);
++       if (static_branch_unlikely(&ksu_is_input_hook_enabled))
++               ksu_handle_input_handle_event(&type, &code, &value);
  #endif
 diff --git a/fs/Makefile b/fs/Makefile
 index 0fc34cafe665..8f4b814e1eb5 100644
@@ -2334,25 +2329,93 @@ index 528c4baad091..56614af83d4a 100644
  };
  
  #endif
-diff --git a/kernel/reboot.c b/kernel/reboot.c
---- a/kernel/reboot.c
-+++ b/kernel/reboot.c
-@@ -302,6 +302,9 @@ EXPORT_SYMBOL_GPL(kernel_power_off);
- 
- DEFINE_MUTEX(system_transition_mutex);
+--- a/fs/read_write.c
++++ b/fs/read_write.c
+@@ -603,8 +603,18 @@
+ 	return ret;
+ }
  
 +#ifdef CONFIG_KSU_SUSFS
-+extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
++extern struct static_key_true ksu_is_init_rc_hook_enabled;
++extern __attribute__((cold)) void ksu_handle_sys_read(unsigned int fd);
 +#endif
 +
- #ifdef CONFIG_KSU
- extern int ksu_handle_sys_reboot(int magic1, int magic2, 
-                                  unsigned int cmd, void __user **arg); 
-@@ -317,10 +320,19 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
- 	char buffer[256]; 
- 	int ret = 0; 
- 	 
+ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+ {
++#ifdef CONFIG_KSU_SUSFS
++	if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))
++		ksu_handle_sys_read(fd);
++#endif
++
+ 	return ksys_read(fd, buf, count);
+ }
+ 
+--- a/fs/super.c
++++ b/fs/super.c
+@@ -37,6 +37,9 @@
+ #include <linux/lockdep.h>
+ #include <linux/user_namespace.h>
+ #include <linux/fs_context.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs_def.h>
++#endif // #ifdef CONFIG_KSU_SUSFS
+ #include <uapi/linux/mount.h>
+ #include "internal.h"
+ 
+@@ -1070,6 +1073,11 @@
+ 
+ static DEFINE_IDA(unnamed_dev_ida);
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++extern bool susfs_is_current_ksu_domain(void);
++extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++
+ /**
+  * get_anon_bdev - Allocate a block device for filesystems which don't have one.
+  * @p: Pointer to a dev_t.
+@@ -1084,6 +1092,22 @@
+ int get_anon_bdev(dev_t *p)
+ {
+ 	int dev;
++
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
++		if (susfs_is_current_ksu_domain()) {
++			dev = ida_alloc_range(&unnamed_dev_ida, DEFAULT_KSU_MNT_MINOR_DEV, (1 << MINORBITS) - 1,
++				GFP_ATOMIC);
++			if (dev == -ENOSPC)
++				dev = -EMFILE;
++			if (dev < 0)
++				return dev;
++
++			*p = MKDEV(0, dev);
++			return 0;
++		}
++	}
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+ 
+ 	/*
+ 	 * Many userspace utilities consider an FSID of 0 invalid.
+--- a/kernel/reboot.c
++++ b/kernel/reboot.c
+@@ -310,7 +310,7 @@
+  *
+  * reboot doesn't sync: do that yourself before calling this.
+  */
 -#ifdef CONFIG_KSU
++#if defined(CONFIG_KSU) || defined(CONFIG_KSU_SUSFS)
+ extern int ksu_handle_sys_reboot(int magic1, int magic2,
+                                  unsigned int cmd, void __user **arg);
+ #endif
+@@ -322,10 +322,16 @@
+ 	char buffer[256];
+ 	int ret = 0;
+ 	
+-#ifdef CONFIG_KSU
+-    if (system_state == SYSTEM_RUNNING) {
+-        ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+-    }
 +#ifdef CONFIG_KSU_SUSFS
 +	ret = ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
 +	if (ret) {
@@ -2361,10 +2424,352 @@ diff --git a/kernel/reboot.c b/kernel/reboot.c
 +	return ret;
 +orig_flow:
 +#elif defined(CONFIG_KSU)
-     if (system_state == SYSTEM_RUNNING) { 
-         ksu_handle_sys_reboot(magic1, magic2, cmd, &arg); 
-     } 
++	if (system_state == SYSTEM_RUNNING)
++		ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
  #endif
+ 	
+ 	/* We only trust the superuser with rebooting the system. */
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -79,6 +79,9 @@
+ #include <asm/mmu_context.h>
+ #include <asm/pgalloc.h>
+ #include <linux/uaccess.h>
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++#include <linux/susfs_def.h>
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ #include <asm/tlb.h>
+ #include <asm/tlbflush.h>
+ #include <asm/pgtable.h>
+@@ -4538,11 +4541,20 @@
+ 	if (down_read_killable(&mm->mmap_sem))
+ 		return 0;
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++	vma = find_vma(mm, addr);
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++
+ 	/* ignore errors, just check how much was successfully transferred */
+ 	while (len) {
+ 		int bytes, ret, offset;
+ 		void *maddr;
+ 		struct page *page = NULL;
++
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			break;
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ 
+ 		ret = get_user_pages_remote(tsk, mm, addr, 1,
+ 				gup_flags, &page, &vma, NULL);
+--- a/security/selinux/avc.c
++++ b/security/selinux/avc.c
+@@ -31,6 +31,12 @@
+ #include "avc_ss.h"
+ #include "classmap.h"
+ 
++#ifdef CONFIG_KSU_SUSFS
++extern u32 susfs_ksu_sid;
++extern u32 susfs_priv_app_sid;
++extern struct static_key_false susfs_is_avc_log_spoofing_enabled;
++#endif
++
+ #define AVC_CACHE_SLOTS			512
+ #define AVC_DEF_CACHE_THRESHOLD		512
+ #define AVC_CACHE_RECLAIM		16
+@@ -719,12 +725,26 @@
+ 
+ 	rc = security_sid_to_context(sad->state, sad->tsid, &scontext,
+ 				     &scontext_len);
++#ifdef CONFIG_KSU_SUSFS
++	if (static_branch_likely(&susfs_is_avc_log_spoofing_enabled)) {
++		if (unlikely(sad->tsid == susfs_ksu_sid)) {
++			if (rc)
++				audit_log_format(ab, " tsid=%d", susfs_priv_app_sid);
++			else
++				audit_log_format(ab, " tcontext=%s", "u:r:priv_app:s0:c512,c768");
++			goto bypass_orig_flow;
++		}
++	}
++#endif
+ 	if (rc)
+ 		audit_log_format(ab, " tsid=%d", sad->tsid);
+ 	else {
+ 		audit_log_format(ab, " tcontext=%s", scontext);
+ 		kfree(scontext);
+ 	}
++#ifdef CONFIG_KSU_SUSFS
++bypass_orig_flow:
++#endif
+ 
+ 	audit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);
+ 
+--- a/security/selinux/hooks.c
++++ b/security/selinux/hooks.c
+@@ -108,6 +108,11 @@
+ #else
+ struct selinux_state selinux_state;
+ #endif
++
++#ifdef CONFIG_KSU_SUSFS
++extern struct selinux_state fake_state;
++extern bool ksu_selinux_hide_running __read_mostly;
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 
+ /* SECMARK reference count */
+ static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
+@@ -6610,6 +6615,43 @@
+ 	return error;
+ }
+ 
++#ifdef CONFIG_KSU_SUSFS
++static int my_setprocattr(const char *name, void *value, size_t size)
++{
++	u32 mysid = current_sid(), sid = 0;
++	int error;
++	char *str = value;
++
++	// apply to all app uids
++	if (likely(current_uid().val < 10000 ||
++				!ksu_selinux_hide_running ||
++				strcmp(name, "current")))
++		return selinux_setprocattr(name, value, size);
++
++	error = avc_has_perm(&selinux_state,
++				     mysid, mysid, SECCLASS_PROCESS,
++				     PROCESS__SETCURRENT, NULL);
++
++	if (error)
++		return error;
++
++	/* Obtain a SID for the context, if one was specified. */
++	if (size && str[0] && str[0] != '\n') {
++		if (str[size-1] == '\n') {
++			str[size-1] = 0;
++			size--;
++		}
++
++		error = security_context_to_sid(&fake_state, value, size,
++						&sid, GFP_KERNEL);
++		if (error)
++			return error;
++	}
++
++	return selinux_setprocattr(name, value, size);
++}
++#endif // #ifdef CONFIG_KSU_SUSFS
++
+ static int selinux_ismaclabel(const char *name)
+ {
+ 	return (strcmp(name, XATTR_SELINUX_SUFFIX) == 0);
+@@ -7156,7 +7198,11 @@
+ 	LSM_HOOK_INIT(d_instantiate, selinux_d_instantiate),
+ 
+ 	LSM_HOOK_INIT(getprocattr, selinux_getprocattr),
++#ifdef CONFIG_KSU_SUSFS
++	LSM_HOOK_INIT(setprocattr, my_setprocattr),
++#else
+ 	LSM_HOOK_INIT(setprocattr, selinux_setprocattr),
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 
+ 	LSM_HOOK_INIT(ismaclabel, selinux_ismaclabel),
+ 	LSM_HOOK_INIT(secctx_to_secid, selinux_secctx_to_secid),
+--- a/security/selinux/selinuxfs.c
++++ b/security/selinux/selinuxfs.c
+@@ -40,6 +40,15 @@
+ #include "security.h"
+ #include "objsec.h"
+ #include "conditional.h"
++
++#ifdef CONFIG_KSU_SUSFS
++extern struct selinux_state fake_state;
++extern struct page *fake_status;
++extern struct static_key_false fake_status_initialize_key;
++extern bool ksu_selinux_hide_running __read_mostly;
++extern bool ksu_selinux_hide_enabled __read_mostly;
++extern void initialize_fake_status(void);
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 
+ enum sel_inos {
+ 	SEL_ROOT_INO = 2,
+@@ -229,6 +238,29 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_KSU_SUSFS
++static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
++{
++	void *data;
++	int ret;
++
++	if (likely(current_uid().val >= 10000 && ksu_selinux_hide_enabled)) {
++		mutex_lock(&selinux_state.status_lock);
++		data = fake_status;
++		mutex_unlock(&selinux_state.status_lock);
++		if (data) {
++			filp->private_data = data;
++			return 0;
++		}
++	}
++
++	ret = sel_open_handle_status(inode, filp);
++	if (static_branch_unlikely(&fake_status_initialize_key) && !ret && !fake_status)
++		initialize_fake_status();
++	return ret;
++}
++#endif // #ifdef CONFIG_KSU_SUSFS
++
+ static ssize_t sel_read_handle_status(struct file *filp, char __user *buf,
+ 				      size_t count, loff_t *ppos)
+ {
+@@ -264,7 +296,11 @@
+ }
+ 
+ static const struct file_operations sel_handle_status_ops = {
++#ifdef CONFIG_KSU_SUSFS
++	.open		= my_sel_open_handle_status,
++#else
+ 	.open		= sel_open_handle_status,
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 	.read		= sel_read_handle_status,
+ 	.mmap		= sel_mmap_handle_status,
+ 	.llseek		= generic_file_llseek,
+@@ -634,6 +670,46 @@
+ 	return length;
+ }
+ 
++#ifdef CONFIG_KSU_SUSFS
++static ssize_t my_write_context(struct file *file, char *buf, size_t size)
++{
++	char *canon = NULL;
++	u32 sid, len;
++	ssize_t length;
++
++	// apply to all app uids
++	if (likely(current_uid().val < 10000 || !ksu_selinux_hide_running))
++		return sel_write_context(file, buf, size);
++
++	length = avc_has_perm(&selinux_state,
++			      current_sid(), SECINITSID_SECURITY,
++			      SECCLASS_SECURITY, SECURITY__CHECK_CONTEXT, NULL);
++	if (length)
++		goto out;
++
++	length = security_context_to_sid(&fake_state, buf, size, &sid, GFP_KERNEL);
++	if (length)
++		goto out;
++
++	length = security_sid_to_context(&fake_state, sid, &canon, &len);
++	if (length)
++		goto out;
++
++	length = -ERANGE;
++	if (len > SIMPLE_TRANSACTION_LIMIT) {
++		pr_err("SELinux: %s:  context size (%u) exceeds "
++			"payload max\n", __func__, len);
++		goto out;
++	}
++
++	memcpy(buf, canon, len);
++	length = len;
++out:
++	kfree(canon);
++	return length;
++}
++#endif // #ifdef CONFIG_KSU_SUSFS
++
+ static ssize_t sel_read_checkreqprot(struct file *filp, char __user *buf,
+ 				     size_t count, loff_t *ppos)
+ {
+@@ -774,14 +850,26 @@
+ static ssize_t sel_write_relabel(struct file *file, char *buf, size_t size);
+ static ssize_t sel_write_user(struct file *file, char *buf, size_t size);
+ static ssize_t sel_write_member(struct file *file, char *buf, size_t size);
++#ifdef CONFIG_KSU_SUSFS
++static ssize_t my_write_access(struct file *file, char *buf, size_t size);
++static ssize_t my_write_context(struct file *file, char *buf, size_t size);
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 
+ static ssize_t (*const write_op[])(struct file *, char *, size_t) = {
++#ifdef CONFIG_KSU_SUSFS
++	[SEL_ACCESS] = my_write_access,
++#else
+ 	[SEL_ACCESS] = sel_write_access,
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 	[SEL_CREATE] = sel_write_create,
+ 	[SEL_RELABEL] = sel_write_relabel,
+ 	[SEL_USER] = sel_write_user,
+ 	[SEL_MEMBER] = sel_write_member,
++#ifdef CONFIG_KSU_SUSFS
++	[SEL_CONTEXT] = my_write_context,
++#else
+ 	[SEL_CONTEXT] = sel_write_context,
++#endif // #ifdef CONFIG_KSU_SUSFS
+ };
+ 
+ static ssize_t selinux_transaction_write(struct file *file, const char __user *buf, size_t size, loff_t *pos)
+@@ -868,6 +956,61 @@
+ 	kfree(scon);
+ 	return length;
+ }
++
++#ifdef CONFIG_KSU_SUSFS
++static ssize_t my_write_access(struct file *file, char *buf, size_t size)
++{
++	char *scon = NULL, *tcon = NULL;
++	u32 ssid, tsid;
++	u16 tclass;
++	struct av_decision avd;
++	ssize_t length;
++
++	// apply to all app uids
++	if (likely(current_uid().val < 10000 || !ksu_selinux_hide_running))
++		return sel_write_access(file, buf, size);
++
++	length = avc_has_perm(&selinux_state,
++			      current_sid(), SECINITSID_SECURITY,
++			      SECCLASS_SECURITY, SECURITY__COMPUTE_AV, NULL);
++	if (length)
++		goto out;
++
++	length = -ENOMEM;
++	scon = kzalloc(size + 1, GFP_KERNEL);
++	if (!scon)
++		goto out;
++
++	length = -ENOMEM;
++	tcon = kzalloc(size + 1, GFP_KERNEL);
++	if (!tcon)
++		goto out;
++
++	length = -EINVAL;
++	if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
++		goto out;
++
++	length = security_context_str_to_sid(&fake_state, scon, &ssid, GFP_KERNEL);
++	if (length)
++		goto out;
++
++	length = security_context_str_to_sid(&fake_state, tcon, &tsid, GFP_KERNEL);
++	if (length)
++		goto out;
++
++	security_compute_av_user(&fake_state, ssid, tsid, tclass, &avd);
++
++	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
++			  "%x %x %x %x %u %x",
++			  avd.allowed, 0xffffffff,
++			  avd.auditallow, avd.auditdeny,
++			  avd.seqno, avd.flags);
++out:
++	kfree(tcon);
++	kfree(scon);
++	return length;
++}
++#endif // #ifdef CONFIG_KSU_SUSFS
+ 
+ static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
+ {
 diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
 index b8ec1dbd1be5..6c48a53a88ea 100644
 --- a/kernel/kallsyms.c
