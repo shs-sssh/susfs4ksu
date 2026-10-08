@@ -98,7 +98,7 @@ index 16da4778c..2c95d13ec 100644
 	if (retval < 0)
 		goto out;
  
-@@ -1920,6 +1945,18 @@ static int __do_execve_file(int fd, struct filename *filename,
+@@ -1919,6 +1944,18 @@ static int __do_execve_file(int fd, struct filename *filename,
                     void *envp,
                     int *flags);
  #endif
