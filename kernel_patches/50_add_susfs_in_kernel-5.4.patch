@@ -34,7 +34,7 @@ index 0fc34cafe665..8f4b814e1eb5 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
 @@ -17,6 +17,8 @@ obj-y :=	open.o read_write.o file_table.o super.o \
- 		stack.o fs_struct.o statfs.o fs_pin.o nsfs.o \
+   stack.o fs_struct.o statfs.o fs_pin.o nsfs.o \
    fs_types.o fs_context.o fs_parser.o fsopen.o
  
 +obj-$(CONFIG_KSU_SUSFS) += susfs.o
@@ -125,9 +125,9 @@ index 682526c61358..bcf4a0c5dd15 100644
  #include "mount.h"
  
 @@ -2298,6 +2301,11 @@ struct dentry *__d_lookup_rcu(const struct dentry *parent,
- 				continue;
- 			if (dentry_cmp(dentry, str, hashlen_len(hashlen)) != 0)
- 				continue;
+     continue;
+     if (dentry_cmp(dentry, str, hashlen_len(hashlen)) != 0)
+     continue;
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +			if (dentry->d_inode && dentry->d_inode->i_mapping && unlikely(test_bit(AS_FLAGS_SUS_PATH,
 +                     &dentry->d_inode->i_mapping->flags)) &&
@@ -135,9 +135,9 @@ index 682526c61358..bcf4a0c5dd15 100644
 +  		    continue;
 +}
 +#endif
- 		}
+   }
    *seqp = seq;
- 		return dentry;
+   return dentry;
 @@ -2381,6 +2389,12 @@ struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name)
  		if (dentry->d_name.hash != hash)
  			continue;
