@@ -2304,7 +2304,7 @@ diff --git a/include/linux/mount.h b/include/linux/mount.h
 index adcc8f01c316..f605a2018e64 100644
 --- a/include/linux/mount.h
 +++ b/include/linux/mount.h
-@@ -72,7 +72,14 @@ struct vfsmount {
+@@ -73,7 +73,14 @@ struct vfsmount {
  	ANDROID_KABI_RESERVE(1);
  	ANDROID_KABI_RESERVE(2);
  	ANDROID_KABI_RESERVE(3);
