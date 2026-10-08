@@ -27,6 +27,9 @@ index 9190aa182..89889bcf0 100644
 +       if (static_branch_unlikely(&ksu_is_input_hook_enabled))
 +               ksu_handle_input_handle_event(&type, &code, &value);
  #endif
+ 
+	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
+		add_input_randomness(type, code, value);
 diff --git a/fs/Makefile b/fs/Makefile
 index 0fc34cafe665..8f4b814e1eb5 100644
 --- a/fs/Makefile
