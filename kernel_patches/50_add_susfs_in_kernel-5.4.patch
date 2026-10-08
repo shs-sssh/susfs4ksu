@@ -129,9 +129,7 @@ index 682526c61358..bcf4a0c5dd15 100644
      if (dentry_cmp(dentry, str, hashlen_len(hashlen)) != 0)
      continue;
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+			if (dentry->d_inode && dentry->d_inode->i_mapping && unlikely(test_bit(AS_FLAGS_SUS_PATH,
-+                     &dentry->d_inode->i_mapping->flags)) &&
-+   		susfs_is_current_proc_umounted_app()) {
++			if (dentry->d_inode && dentry->d_inode->i_mapping && unlikely(test_bit(AS_FLAGS_SUS_PATH, &dentry->d_inode->i_mapping->flags)) && susfs_is_current_proc_umounted_app()) {
 +  		    continue;
 +}
 +#endif
