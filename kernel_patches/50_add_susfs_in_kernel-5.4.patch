@@ -2367,7 +2367,7 @@ index 528c4baad091..56614af83d4a 100644
 diff --git a/fs/read_write.c b/fs/read_write.c
 --- a/fs/read_write.c
 +++ b/fs/read_write.c
-@@ -603,7 +603,17 @@
+@@ -603,8 +603,18 @@
  	return ret;
  }
  
@@ -2517,7 +2517,7 @@ diff --git a/security/selinux/avc.c b/security/selinux/avc.c
  #define AVC_CACHE_SLOTS			512
  #define AVC_DEF_CACHE_THRESHOLD		512
  #define AVC_CACHE_RECLAIM		16
-@@ -719,11 +725,25 @@
+@@ -719,12 +725,26 @@
  
  	rc = security_sid_to_context(sad->state, sad->tsid, &scontext,
  				     &scontext_len);
