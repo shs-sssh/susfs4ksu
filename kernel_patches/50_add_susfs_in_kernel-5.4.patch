@@ -56,12 +56,12 @@ index 16da4778c..2c95d13ec 100644
  
  #include <linux/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1919,16 +1922,51 @@
+@@ -1919,16 +1922,55 @@
                      void *envp,
                      int *flags);
  #endif
 +#ifdef CONFIG_KSU_SUSFS
-+extern struct static_key_true ksu_su_compat_enabled;
++extern bool ksu_su_compat_enabled;
 +extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
 +extern bool __ksu_is_allow_uid_for_current(uid_t uid);
 +extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
@@ -80,7 +80,11 @@ index 16da4778c..2c95d13ec 100644
 +	bool is_su_session = false;
 +#endif
  #ifdef CONFIG_KSU
++#ifdef CONFIG_KSU_SUSFS
++    is_su_session = ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags) > 0;
++#else
      ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++#endif
  #endif
 -
 -	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
@@ -88,11 +92,11 @@ index 16da4778c..2c95d13ec 100644
 +	if (likely(susfs_is_current_proc_no_su()))
 +		goto orig_flow;
 +
-+	if (static_branch_likely(&ksu_su_compat_enabled)) {
++	if (ksu_su_compat_enabled && !is_su_session) {
 +		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
-+			is_su_session = !ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++			is_su_session = ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags) > 0;
 +		} else {
-+			is_su_session = !ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
++			is_su_session = ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags) > 0;
 +		}
 +	}
 +
@@ -1469,7 +1473,7 @@ diff --git a/fs/open.c b/fs/open.c
   * switching the fsuid/fsgid around to the real ones.
   */
 +#ifdef CONFIG_KSU_SUSFS
-+extern struct static_key_true ksu_su_compat_enabled;
++extern bool ksu_su_compat_enabled;
 +extern bool __ksu_is_allow_uid_for_current(uid_t uid);
 +extern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
 +#endif
@@ -1504,7 +1508,7 @@ diff --git a/fs/open.c b/fs/open.c
 +	if (likely(susfs_is_current_proc_no_su()))
 +		goto orig_flow;
 +
-+	if (static_branch_likely(&ksu_su_compat_enabled)) {
++	if (ksu_su_compat_enabled) {
 +		if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
 +			ksu_handle_faccessat(&dfd, &fname, &mode, NULL);
 +	}
