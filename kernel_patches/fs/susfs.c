@@ -22,6 +22,9 @@
 #include <linux/jump_label.h>
 #include <linux/security.h>
 #include <linux/susfs.h>
+#include <linux/ctype.h>
+#include <linux/spinlock.h>
+#include <linux/err.h>
 #include "fuse/fuse_i.h"
 #include "mount.h"
 
@@ -42,6 +45,7 @@ DEFINE_STATIC_KEY_TRUE(susfs_is_log_enabled);
 
 /* sus_path */
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+static void susfs_add_sus_path_dname(const char *pathname); /* forward decl, defined below */
 DEFINE_STATIC_SRCU(susfs_srcu_sus_path_loop);
 static DEFINE_MUTEX(susfs_mutex_lock_sus_path);
 static LIST_HEAD(LH_SUS_PATH_LOOP);
@@ -89,6 +93,7 @@ void susfs_add_sus_path(void __user **user_info) {
 	set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
 	SUSFS_LOGI("flagged AS_FLAGS_SUS_PATH on pathname: '%s', ino: '%lu', inode->i_mapping->flags: 0x%lx\n",
 				info.target_pathname, inode->i_ino, inode->i_mapping->flags);
+	susfs_add_sus_path_dname(info.target_pathname);
 	info.err = 0;
 out_path_put_path:
 	path_put(&path);
@@ -126,6 +131,7 @@ void susfs_add_sus_path_loop(void __user **user_info) {
 	list_add_tail_rcu(&new_list->list, &LH_SUS_PATH_LOOP);
 	mutex_unlock(&susfs_mutex_lock_sus_path);
 	SUSFS_LOGI("target_pathname: '%s', is successfully added to LH_SUS_PATH_LOOP\n", new_list->target_pathname);
+	susfs_add_sus_path_dname(info.target_pathname);
 	info.err = 0;
 out_copy_to_user:
 	if (copy_to_user(&((struct st_susfs_sus_path __user*)*user_info)->err, &info.err, sizeof(info.err))) {
@@ -236,6 +242,131 @@ bool susfs_is_inode_sus_path(struct inode *inode)
 
 int susfs_get_data_path(struct path *path) {
 	return kern_path("/data", LOOKUP_FOLLOW, path);
+}
+
+/*
+ * - Secondary, name-based filter used only when listing the exact root
+ *   directories of "/Android/data" and "/sdcard" (fs/readdir.c calls these
+ *   via susfs_should_skip_dirent()).
+ * - This exists because on some FUSE-backed sdcard implementations,
+ *   ilookup(sb, ino) done against the backing inode can miss entries that
+ *   are visible through the FUSE view, so we additionally match by the
+ *   basename of every registered sus_path.
+ * - NOTE: susfs_is_base_dentry_sdcard_dir() identifies the sdcard root by
+ *   common AOSP mount layouts (/storage/emulated/<uid>, /storage/self/primary).
+ *   Vendor ROMs with a different storage stack may need adjusting this.
+ */
+#define SUS_PATH_DNAME_HASH_BITS 8
+static DEFINE_HASHTABLE(SUS_PATH_DNAME_HLIST, SUS_PATH_DNAME_HASH_BITS);
+static DEFINE_SPINLOCK(susfs_sus_path_dname_lock);
+
+struct st_susfs_sus_path_dname_hlist {
+	struct hlist_node node;
+	char              name[SUSFS_MAX_LEN_PATHNAME];
+	u32               name_hash;
+};
+
+static void susfs_add_sus_path_dname(const char *pathname) {
+	struct st_susfs_sus_path_dname_hlist *new_entry;
+	const char *basename;
+	u32 hash;
+
+	if (!pathname || !*pathname)
+		return;
+
+	basename = strrchr(pathname, '/');
+	basename = basename ? basename + 1 : pathname;
+	if (!*basename)
+		return;
+
+	hash = full_name_hash(NULL, basename, strlen(basename));
+
+	spin_lock(&susfs_sus_path_dname_lock);
+	hash_for_each_possible(SUS_PATH_DNAME_HLIST, new_entry, node, hash) {
+		if (!strcmp(new_entry->name, basename)) {
+			spin_unlock(&susfs_sus_path_dname_lock);
+			return;
+		}
+	}
+	spin_unlock(&susfs_sus_path_dname_lock);
+
+	new_entry = kzalloc(sizeof(*new_entry), GFP_KERNEL);
+	if (!new_entry)
+		return;
+	strscpy(new_entry->name, basename, SUSFS_MAX_LEN_PATHNAME - 1);
+	new_entry->name_hash = hash;
+
+	spin_lock(&susfs_sus_path_dname_lock);
+	hash_add(SUS_PATH_DNAME_HLIST, &new_entry->node, hash);
+	spin_unlock(&susfs_sus_path_dname_lock);
+	SUSFS_LOGI("registered sus_path basename '%s' for android_data/sdcard dirent filtering\n", basename);
+}
+
+static bool susfs_is_sus_path_dname_found(const char *d_name) {
+	struct st_susfs_sus_path_dname_hlist *entry;
+	u32 hash;
+	bool found = false;
+
+	if (!d_name || !*d_name)
+		return false;
+
+	hash = full_name_hash(NULL, d_name, strlen(d_name));
+
+	spin_lock(&susfs_sus_path_dname_lock);
+	hash_for_each_possible(SUS_PATH_DNAME_HLIST, entry, node, hash) {
+		if (!strcmp(entry->name, d_name)) {
+			found = true;
+			break;
+		}
+	}
+	spin_unlock(&susfs_sus_path_dname_lock);
+	return found;
+}
+
+bool susfs_is_sus_android_data_d_name_found(const char *d_name) {
+	return susfs_is_sus_path_dname_found(d_name);
+}
+
+bool susfs_is_sus_sdcard_d_name_found(const char *d_name) {
+	return susfs_is_sus_path_dname_found(d_name);
+}
+
+bool susfs_is_base_dentry_android_data_dir(struct dentry *base) {
+	if (!base || IS_ERR(base) || !base->d_parent)
+		return false;
+	if (!base->d_name.name || strcmp(base->d_name.name, "data"))
+		return false;
+	if (!base->d_parent->d_name.name || strcmp(base->d_parent->d_name.name, "Android"))
+		return false;
+	return true;
+}
+
+bool susfs_is_base_dentry_sdcard_dir(struct dentry *base) {
+	const unsigned char *name;
+	size_t i, len;
+
+	if (!base || IS_ERR(base) || !base->d_parent)
+		return false;
+
+	name = base->d_name.name;
+	len = base->d_name.len;
+	if (!name || !len)
+		return false;
+
+	/* /storage/self/primary */
+	if (!strcmp(name, "primary") && base->d_parent->d_name.name &&
+			!strcmp(base->d_parent->d_name.name, "self"))
+		return true;
+
+	/* /storage/emulated/<uid>, e.g. /storage/emulated/0 */
+	for (i = 0; i < len; i++) {
+		if (!isdigit(name[i]))
+			return false;
+	}
+	if (base->d_parent->d_name.name && !strcmp(base->d_parent->d_name.name, "emulated"))
+		return true;
+
+	return false;
 }
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 
