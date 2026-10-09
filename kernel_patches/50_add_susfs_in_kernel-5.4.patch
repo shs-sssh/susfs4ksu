@@ -56,7 +56,7 @@ index 16da4778c..2c95d13ec 100644
  
  #include <linux/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1919,16 +1922,51 @@
+@@ -1919,16 +1922,81 @@
                      void *envp,
                      int *flags);
  #endif
@@ -68,35 +68,65 @@ index 16da4778c..2c95d13ec 100644
 +                    void *envp, int *flags);
 +extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
 +                void *envp, int *flags);
-+extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
-+                void *envp, int *flags, int *retval);
++extern int ksu_install_fd(void);
++
++/* Keep post-exec FD installation in the kernel patch, not a SukiSU file hunk. */
++static int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
++                void *argv_user, void *envp_user, int *never_use_flags, int *retval)
++{
++	int installed_fd;
++
++	(void)fd;
++	(void)filename_ptr;
++	(void)argv_user;
++	(void)envp_user;
++	(void)never_use_flags;
++
++	if (unlikely(!retval) || *retval < 0)
++		return 0;
++
++	installed_fd = ksu_install_fd();
++	if (installed_fd < 0) {
++		pr_warn("install sucompat fd failed: %d\n", installed_fd);
++		return installed_fd;
++	}
++
++	pr_info("install sucompat fd: %d for pid %d\n", installed_fd, current->pid);
++	return 0;
++}
 +#endif
  static int do_execveat_common(int fd, struct filename *filename,
  			      struct user_arg_ptr argv,
  			      struct user_arg_ptr envp,
  			      int flags)
  {
-+#ifdef CONFIG_KSU_SUSFS
-+	bool is_su_session = false;
-+#endif
 -#ifdef CONFIG_KSU
 -    ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 -#endif
+-
+-	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
++#ifdef CONFIG_KSU_SUSFS
++	bool is_su_session = false;
++#endif
 +#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_SUSFS)
 +    ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 +#endif
--
--	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 +#ifdef CONFIG_KSU_SUSFS
 +	if (likely(susfs_is_current_proc_no_su()))
 +		goto orig_flow;
 +
 +	if (ksu_su_compat_enabled) {
-+		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
-+			is_su_session = !ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-+		} else {
-+			is_su_session = !ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-+		}
++		/* SukiSU rewrites the accepted /system/bin/su path to ksud_path. */
++		bool was_su_path = filename && !IS_ERR(filename) &&
++			!strcmp(filename->name, "/system/bin/su");
++
++		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted))
++			(void)ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++		else
++			(void)ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
++
++		is_su_session = was_su_path && filename && !IS_ERR(filename) &&
++			strcmp(filename->name, "/system/bin/su") != 0;
 +	}
 +
 +orig_flow:
@@ -2337,7 +2367,7 @@ index 528c4baad091..56614af83d4a 100644
 diff --git a/fs/read_write.c b/fs/read_write.c
 --- a/fs/read_write.c
 +++ b/fs/read_write.c
-@@ -603,8 +603,18 @@
+@@ -603,7 +603,17 @@
  	return ret;
  }
  
@@ -2487,7 +2517,7 @@ diff --git a/security/selinux/avc.c b/security/selinux/avc.c
  #define AVC_CACHE_SLOTS			512
  #define AVC_DEF_CACHE_THRESHOLD		512
  #define AVC_CACHE_RECLAIM		16
-@@ -719,12 +725,26 @@
+@@ -719,11 +725,25 @@
  
  	rc = security_sid_to_context(sad->state, sad->tsid, &scontext,
  				     &scontext_len);
@@ -2879,119 +2909,3 @@ index 6ac5d1bed8d1..4ccb49f666ac 100644
  	up_read(&uts_sem);
  	if (copy_to_user(name, &tmp, sizeof(tmp)))
  		return -EFAULT;
-
-diff --git a/drivers/kernelsu/feature/sucompat.c b/drivers/kernelsu/feature/sucompat.c
---- a/drivers/kernelsu/feature/sucompat.c
-+++ b/drivers/kernelsu/feature/sucompat.c
-@@ -118,25 +118,25 @@
-     int ret;
- 
-     if (unlikely(!filename_ptr))
--        return 0;
-+        return -EINVAL;
- 
-     filename = *filename_ptr;
-     if (IS_ERR(filename))
--        return 0;
-+        return -ENOENT;
- 
-     if (!ksu_handle_execveat_init(filename, (struct user_arg_ptr*)argv_user, (struct user_arg_ptr*)envp_user))
--        return 0;
-+        return -ENOENT;
- 
-     if (!(__ksu_is_allow_uid_for_current(current_uid().val)))
--        return 0;
-+        return -EPERM;
- 
-     if (likely(memcmp(filename->name, su_path, sizeof(su_path))))
--        return 0;
-+        return -ENOENT;
- 
-     if (current_chrooted())
-     {
-         pr_err("ksu_handle_execveat_sucompat: su found but NOT allowed! Because current process is running in chrooted environment\n");
--        return 0;
-+        return -EPERM;
-     }
- 
-     pr_info("ksu_handle_execveat_sucompat: su found\n");
-@@ -146,16 +146,20 @@
-     pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr*)argv_user, GFP_KERNEL);
- 
-     ret = escape_with_root_profile();
--    if (ret)
-+    if (ret) {
-         pr_err("escape_with_root_profile() failed: %d\n", ret);
-+        ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
-+        return ret;
-+    }
- 
-     const char __user *argv_user_ptr = get_user_arg_ptr(*((struct user_arg_ptr*)argv_user), 0);
-     if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
-         pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\n");
--        return 0;
--    }
--
--    ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
-+        ksu_sulog_emit_pending(pending_sucompat, -EINVAL, GFP_KERNEL);
-+        return -EINVAL;
-+    }
-+
-+    ksu_sulog_emit_pending(pending_sucompat, 0, GFP_KERNEL);
-     return 0;
- }
- 
-@@ -175,6 +179,38 @@
- 
-     return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp,
-                         flags);
-+}
-+
-+/*
-+ * Install the FD after exec succeeds, so O_CLOEXEC does not close it during
-+ * the execve transition. This SukiSU tree exposes ksu_install_fd() (the
-+ * current [ksu_driver] interface), not the older ksu_install_su_fd() API.
-+ */
-+extern int ksu_install_fd(void);
-+
-+int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
-+                  void *argv_user, void *envp_user,
-+                  int *__never_use_flags, int *retval)
-+{
-+    int installed_fd;
-+
-+    (void)fd;
-+    (void)filename_ptr;
-+    (void)argv_user;
-+    (void)envp_user;
-+    (void)__never_use_flags;
-+
-+    if (unlikely(!retval) || *retval < 0)
-+        return 0;
-+
-+    installed_fd = ksu_install_fd();
-+    if (installed_fd < 0) {
-+        pr_warn("install sucompat fd failed: %d\n", installed_fd);
-+        return installed_fd;
-+    }
-+
-+    pr_info("install sucompat fd: %d for pid %d\n", installed_fd, current->pid);
-+    return 0;
- }
- 
- int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,
-diff --git a/drivers/kernelsu/feature/sucompat.h b/drivers/kernelsu/feature/sucompat.h
---- a/drivers/kernelsu/feature/sucompat.h
-+++ b/drivers/kernelsu/feature/sucompat.h
-@@ -12,6 +12,9 @@
- int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
-                  void *argv_user, void *envp_user,
-                  int *__never_use_flags);
-+int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
-+                  void *argv_user, void *envp_user,
-+                  int *__never_use_flags, int *retval);
- #else
- int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
- int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
--- 
-2.34.1
