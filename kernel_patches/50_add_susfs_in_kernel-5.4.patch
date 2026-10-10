@@ -2181,21 +2181,22 @@ index 376543199b5a..a15298088352 100644
  
  /**
   * generic_fillattr - Fill in the basic attributes from the inode struct
-@@ -58,3 +68,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
- 		u32 request_mask, unsigned int query_flags)
- {
- 	struct inode *inode = d_backing_inode(path->dentry);
-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-+	bool is_sus_kstat = false;
-+	bool is_fuse = false;
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-@@ -77,9 +87,34 @@
+@@ -77,9 +87,51 @@
  	if (IS_AUTOMOUNT(inode))
  		stat->attributes |= STATX_ATTR_AUTOMOUNT;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-+	if (susfs_is_current_app_uid())
-+		is_sus_kstat = susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse);
++	if (susfs_is_current_app_uid()) {
++		bool is_fuse = false;
++		if (susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse)) {
++			if (!is_fuse) {
++				stat->mnt_id = real_mount(path->mnt)->mnt_id;
++				stat->result_mask |= STATX_SUS_KSTAT;
++			}
++			stat->mnt_id = real_mount(path->mnt)->mnt_id;
++			stat->result_mask |= STATX_SUS_KSTAT_FUSE;
++		}
++	}
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +
  	if (inode->i_op->getattr)
@@ -2203,12 +2204,27 @@ index 376543199b5a..a15298088352 100644
 +	{
 +		int err = inode->i_op->getattr(path, stat, request_mask,
 +					    query_flags);
-+		if (!err && is_sus_kstat) {
-+			stat->mnt_id = real_mount(path->mnt)->mnt_id;
-+			susfs_sus_kstat_spoof_generic_fillattr(inode, stat,
-+				is_fuse ? STATX_SUS_KSTAT_FUSE : STATX_SUS_KSTAT);
++		if (!err) {
++			if (stat->result_mask & STATX_SUS_KSTAT) {
++				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
++				return err;
++			}
++			if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
++				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
++				return err;
++			}
 +		}
 +		return err;
++	}
++	if (stat->result_mask & STATX_SUS_KSTAT) {
++		generic_fillattr(inode, stat);
++		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
++		return 0;
++	}
++	if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
++		generic_fillattr(inode, stat);
++		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
++		return 0;
 +	}
 +#else
  		return inode->i_op->getattr(path, stat, request_mask,
@@ -2216,13 +2232,6 @@ index 376543199b5a..a15298088352 100644
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  
  	generic_fillattr(inode, stat);
-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-+	if (is_sus_kstat) {
-+		stat->mnt_id = real_mount(path->mnt)->mnt_id;
-+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat,
-+				is_fuse ? STATX_SUS_KSTAT_FUSE : STATX_SUS_KSTAT);
-+	}
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  	return 0;
 @@ -199,6 +251,10 @@
  		goto out;
@@ -2450,10 +2459,14 @@ diff --git a/mm/memory.c b/mm/memory.c
  #include <asm/tlb.h>
  #include <asm/tlbflush.h>
  #include <asm/pgtable.h>
-@@ -4538,11 +4541,18 @@
+@@ -4538,11 +4541,20 @@
  	if (down_read_killable(&mm->mmap_sem))
  		return 0;
  
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++	vma = find_vma(mm, addr);
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++
  	/* ignore errors, just check how much was successfully transferred */
  	while (len) {
  		int bytes, ret, offset;
@@ -2461,9 +2474,7 @@ diff --git a/mm/memory.c b/mm/memory.c
  		struct page *page = NULL;
 +
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+		vma = find_vma(mm, addr);
-+		if (vma && addr >= vma->vm_start && vma->vm_file &&
-+		    SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
 +			break;
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
  
@@ -2796,7 +2807,7 @@ index b8ec1dbd1be5..6c48a53a88ea 100644
  
  /*
   * These will be re-linked against their real values
-@@ -657,8 +660,36 @@
+@@ -657,7 +660,35 @@
  		seq_printf(m, "%px %c %s\t[%s]\n", value,
  			   type, iter->name, iter->module_name);
  	} else
@@ -2832,96 +2843,3 @@ index b8ec1dbd1be5..6c48a53a88ea 100644
 +#endif
  	return 0;
  }
- 
-diff --git a/fs/susfs.c b/fs/susfs.c
---- a/fs/susfs.c
-+++ b/fs/susfs.c
-@@ -1077,52 +1077,58 @@
- 	return new_filename;
- }
- 
- int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen) {
- 	struct st_susfs_open_redirect_hlist *entry = NULL;
-+	int srcu_idx;
-+	size_t redirect_len;
-+
-+	if (buflen < 0)
-+		return -EINVAL;
-+
-+	srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
-+	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
-+		if (entry->reversed_lookup_only &&
-+			entry->target_dev == inode->i_sb->s_dev) {
-+			SUSFS_LOGI("spoof path '%s' to '%s'\n",
-+					entry->info.target_pathname, entry->info.redirected_pathname);
-+			redirect_len = strlen(entry->info.redirected_pathname);
-+			/* readlink(2) does not append a NUL; an exact fit is valid. */
-+			if (redirect_len > buflen) {
-+				SUSFS_LOGE("buflen not big enough\n");
-+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+				return -ENAMETOOLONG;
-+			}
-+			if (copy_to_user(buffer, entry->info.redirected_pathname, redirect_len)) {
-+				SUSFS_LOGE("copy_to_user() failed\n");
-+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+				return -EFAULT;
-+			}
-+			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+			return (int)redirect_len;
-+		}
-+	}
-+	srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+	return -ENOENT;
-+}
-+
-+int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen) {
-+	struct st_susfs_open_redirect_hlist *entry = NULL;
- 	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
- 
- 	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
- 		if (entry->reversed_lookup_only &&
- 			entry->target_dev == inode->i_sb->s_dev)
- 		{
- 			SUSFS_LOGI("spoof path '%s' to '%s'\n",
- 					entry->info.target_pathname, entry->info.redirected_pathname);
--			if (strlen(entry->info.redirected_pathname) >= buflen) {
-+			if (strlen(entry->info.redirected_pathname) > buflen) {
- 				SUSFS_LOGE("buflen not big enough\n");
- 				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
- 				return -ENAMETOOLONG;
- 			}
--			if (copy_to_user(buffer, entry->info.redirected_pathname, strlen(entry->info.redirected_pathname))) {
--				SUSFS_LOGE("copy_to_user() failed\n");
--				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
--				return -EFAULT;
--			}
--			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
--			return 0;
--		}
--	}
--	srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
--	return -ENOENT;
--}
--
--int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen) {
--	struct st_susfs_open_redirect_hlist *entry = NULL;
--	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
--
--	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
--		if (entry->reversed_lookup_only &&
--			entry->target_dev == inode->i_sb->s_dev)
--		{
--			SUSFS_LOGI("spoof path '%s' to '%s'\n",
--					entry->info.target_pathname, entry->info.redirected_pathname);
--			if (strlen(entry->info.redirected_pathname) >= buflen) {
--				SUSFS_LOGE("buflen not big enough\n");
--				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
--				return -ENAMETOOLONG;
--			}
--			strscpy(tmp_buf, entry->info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
-+			strscpy(tmp_buf, entry->info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME);
- 			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
- 			return 0;
- 		}
- 	}
- 	srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
