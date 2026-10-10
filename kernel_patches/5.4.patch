@@ -1210,7 +1210,7 @@
 +	struct mount *r = real_mount(mnt);
 +	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 +	struct super_block *sb = mnt_path.dentry->d_sb;
-+	int err;
++	int err = 0;
 +
 +	if (r->mnt_id >= DEFAULT_KSU_MNT_ID)
 +		return 0;
@@ -3403,7 +3403,7 @@
 +}
 +
 +/* susfs_init */
-+void susfs_init(void) {\
++void susfs_init(void) {
 +	SUSFS_LOGI("Initializing susfs_extra_works\n");
 +	INIT_WORK(&susfs_extra_works, susfs_run_extra_works);
 +	SUSFS_LOGI("susfs is initialized! version: " SUSFS_VERSION " \n");
